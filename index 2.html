@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/><title>Dino Rework</title>
+<style>
+html,body{height:100%;margin:0;font-family:system-ui,Arial;background:#f4f4f4;}
+.container{display:flex;flex-direction:column;align-items:center;padding:12px;gap:8px;}
+#hud{width:100%;max-width:980px;display:flex;justify-content:space-between;}
+canvas{background:#fff;border-radius:8px;border:1px solid #ddd;max-width:100%;height:auto;touch-action:none;}
+.controls{position:fixed;left:50%;transform:translateX(-50%);bottom:12px;display:flex;gap:12px;width:100%;max-width:480px;padding:0 12px;box-sizing:border-box;}
+.btn{flex:1;padding:14px;border-radius:10px;background:#06a;color:#fff;font-weight:700;text-align:center;user-select:none;}
+.mode-btn{padding:8px 10px;border-radius:8px;background:#eee;border:1px solid #ddd;cursor:pointer}
+.startOverlay{position:absolute;left:0;top:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
+.startBox{pointer-events:auto;background:rgba(255,255,255,0.98);padding:16px;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.14);}
+.small{font-size:13px;color:#444}
+</style></head><body>
+<div class="container">
+  <div id="hud"><div class="small">Score: <span id="score">0</span></div>
+  <div><button class="mode-btn" id="modeToggle">Mode: Endless</button></div>
+  <div class="small">High: <span id="high">0</span></div></div>
+  <div style="position:relative;width:100%;max-width:980px;">
+    <canvas id="c" width="900" height="180"></canvas>
+    <div class="startOverlay" id="overlay"><div class="startBox"><div style="font-weight:700">Tap anywhere to Start</div><div class="small" style="margin-top:6px">Mode: <span id="modeLabel">Endless</span></div><button id="startBtn" style="margin-top:8px;padding:10px 12px;border-radius:8px;background:#06a;border:none;color:#fff">Start</button></div></div>
+  </div>
+</div>
+<div class="controls"><div class="btn" id="duckBtn">DUCK</div><div class="btn" id="jumpBtn">JUMP</div></div>
+
+<script>
+const SPRITE_SRC = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAYAAAABACAYAAAATWKC/AAACBUlEQVR4nO3dzXGDMBAGUJxJCa6AKlNCqqQC9+CcfCGOjYJWAu17d/MzA/q0aMHTBAAAAAAAAAAAnNul9wFAiXme73u3sSyL6x6mafrofQAA9CEAAJISAABJCQCApAQAQFKfvQ+g1J4ukBG6P7KfP5zB9eu6u1tt7fZ9q37/qgAAkjpdBUBbNfrugWNSAQAkJQAAkhIAAElZAwBClKwf6VDrQwAAVexpGFj/ViC08TYAsneBZD9/eCfiHnlsUxDEUgFwegaJPlpMjgRBLAEA/OnZIL8sy6V1ZTzP810I1KcLCCjS67Gox7H1CQCApAQAcBqqgLqsAcCB+Q9kIg0RANkv8OznT5z1tWUGPpYhAgBoo0cH0Hr/vfY9TTHf+a+975L/DbAGAJCUCgBe8Mjjt15VQO/Z/4hUAECx1oOxwT+GCgD4l8egHFkNGPhjCQBgl4ggMPC3IQCAKva0jBrw+xAAQAiD+vFZBAZISgUAJ2em3c7Wl6wiXhgrecFrKxUAQFIqAF4yu4RxqQAAkhIAAEkJAICkBABAUgIAIKm3XUAlr3fX6BiJ3n6pLd850SkDnJE20IMSOEA0AQAvCFtGZg0AICkBAJCUAABIyhoAQGURX+6MoAIASEoAACQlAACSsgawkX5wYDQqAICkBABAUgIAICnPtQ/Kx+CAaCoAAAAAAAAY0w9JBKKcXMDbSAAAAABJRU5ErkJggg==";
+const FRAME_W = 64, FRAME_H = 64;
+const FRAMES_MAP = [[0,0,FRAME_W,FRAME_H],[FRAME_W,0,FRAME_W,FRAME_H],[FRAME_W*2,0,FRAME_W,FRAME_H],[FRAME_W*3,0,FRAME_W,FRAME_H],[FRAME_W*4,0,FRAME_W,FRAME_H],[FRAME_W*5,0,FRAME_W,FRAME_H]];
+const canvas = document.getElementById('c'), ctx = canvas.getContext('2d');
+const scoreEl = document.getElementById('score'), highEl = document.getElementById('high');
+const overlay = document.getElementById('overlay'), startBtn = document.getElementById('startBtn'), modeToggle = document.getElementById('modeToggle'), modeLabel = document.getElementById('modeLabel');
+const jumpBtn = document.getElementById('jumpBtn'), duckBtn = document.getElementById('duckBtn');
+let mode = 'endless';
+let highScore = Number(localStorage.getItem('dino_rework_high')||0); highEl.textContent = highScore;
+let spriteImg = new Image(); spriteImg.src = SPRITE_SRC;
+
+let player = { x:120, y:100, w:48, h:48, vy:0, onGround:true, jumping:false, ducking:false, anim:0 };
+const GRAV = 0.9, JUMP_V = -15;
+let obstacles = [], spawnTimer=0, score=0, distance=0, speed=6, frames=0, gameRunning=false, gameOver=false;
+
+function rectsIntersect(a,b){ return !(a.x+a.w < b.x || a.x > b.x + b.w || a.y + a.h < b.y || a.y > b.y + b.h); }
+
+function fit(){ const maxWidth = Math.min(window.innerWidth-24,980); const scale = maxWidth / canvas.width; canvas.style.width = (canvas.width*scale)+'px'; canvas.style.height = (canvas.height*scale)+'px'; }
+window.addEventListener('resize', fit); fit();
+
+function reset(){ obstacles = []; spawnTimer=0; score=0; distance=0; frames=0; gameOver=false; player.y = canvas.height - player.h - 30; player.vy=0; player.onGround=true; player.jumping=false; player.ducking=false; speed = 6; scoreEl.textContent = 0; }
+
+function startGame(){ if(gameRunning) return; reset(); gameRunning=true; overlay.style.display='none'; lastTS = performance.now(); requestAnimationFrame(loop); }
+
+startBtn.addEventListener('click', startGame);
+document.addEventListener('touchstart', (e)=>{ e.preventDefault(); if(!gameRunning) startGame(); else if(!gameOver) doJump(); }, {passive:false});
+document.addEventListener('mousedown', (e)=>{ if(!gameRunning) startGame(); else if(!gameOver) doJump(); });
+
+jumpBtn.addEventListener('touchstart', (e)=>{ e.preventDefault(); if(!gameRunning) startGame(); doJump(); }, {passive:false});
+jumpBtn.addEventListener('mousedown', ()=>{ if(!gameRunning) startGame(); doJump(); });
+duckBtn.addEventListener('touchstart', (e)=>{ e.preventDefault(); if(!gameRunning) startGame(); player.ducking=true; }, {passive:false});
+duckBtn.addEventListener('touchend', (e)=>{ e.preventDefault(); player.ducking=false; }, {passive:false});
+duckBtn.addEventListener('mousedown', (e)=>player.ducking=true);
+duckBtn.addEventListener('mouseup', (e)=>player.ducking=false);
+
+modeToggle.addEventListener('click', ()=>{ mode = (mode==='endless'?'level':'endless'); modeToggle.textContent = 'Mode: '+(mode==='endless'?'Endless':'Level'); modeLabel.textContent = mode==='endless'?'Endless':'Level'; });
+
+function doJump(){ if(player.onGround && !player.jumping){ player.vy = JUMP_V; player.onGround=false; player.jumping=true; } }
+
+function spawnObstacle(){ const r=Math.random(); if(r<0.6){ const h=24+Math.floor(Math.random()*28); const w=20+Math.floor(Math.random()*16); obstacles.push({type:'cactus', x:canvas.width+40, y:canvas.height-h-30, w, h, sprite:5}); } else { const y = canvas.height - 110 - Math.floor(Math.random()*40); obstacles.push({type:'bird', x:canvas.width+40, y, w:46, h:28, sprite:4, flap:Math.random()*20}); } }
+
+function update(dt){ frames++; player.vy += GRAV*dt; player.y += player.vy*dt; const duckH = player.ducking?player.h*0.6:player.h; if(player.y >= canvas.height - duckH -30){ player.y = canvas.height - duckH -30; player.vy=0; player.onGround=true; player.jumping=false; } else player.onGround=false;
+
+ for(let i=obstacles.length-1;i>=0;i--){ let ob=obstacles[i]; ob.x -= speed*dt; if(ob.x+ob.w < -100) obstacles.splice(i,1); const pbox={x:player.x,y:player.y+(player.h-duckH),w:player.w,h:duckH}; const obbox={x:ob.x,y:ob.y,w:ob.w,h:ob.h}; if(rectsIntersect(pbox,obbox)){ gameOver=true; } }
+
+ spawnTimer -= dt*60; if(spawnTimer<=0){ spawnObstacle(); spawnTimer = Math.max(40, 90 - Math.floor(score/200)); }
+ distance += speed*dt; score = Math.floor(distance); scoreEl.textContent = score; if(mode==='endless'){ speed += 0.0005*dt; } frames++; player.anim += dt*12; if(player.anim>3) player.anim=0; }
+
+function drawSprite(fi,dx,dy,dw,dh){ const f = FRAMES_MAP[fi]; ctx.drawImage(spriteImg, f[0], f[1], f[2], f[3], dx, dy, dw, dh); }
+
+function render(){ ctx.fillStyle='#fff'; ctx.fillRect(0,0,canvas.width,canvas.height); ctx.fillStyle='#efefef'; ctx.fillRect(0,canvas.height-30,canvas.width,30); ctx.strokeStyle='#e0e0e0'; ctx.lineWidth=2; ctx.beginPath(); const gutter = Math.floor((performance.now()/20)%40); for(let x=-40+gutter;x<canvas.width;x+=40){ ctx.moveTo(x,canvas.height-30); ctx.lineTo(x+24,canvas.height-36); } ctx.stroke();
+
+ for(const ob of obstacles){ if(ob.sprite!==undefined) drawSprite(ob.sprite, Math.round(ob.x), Math.round(ob.y), ob.w, ob.h); else { ctx.fillStyle='#333'; ctx.fillRect(Math.round(ob.x),Math.round(ob.y),ob.w,ob.h); } }
+
+ let spriteIdx = 0; if(player.ducking) spriteIdx = 3; else if(!player.onGround) spriteIdx = 2; else spriteIdx = (Math.floor(player.anim)%2===0)?0:1; drawSprite(spriteIdx, Math.round(player.x), Math.round(player.y), player.w, player.h);
+
+ ctx.fillStyle='#222'; ctx.font='14px system-ui, Arial'; ctx.textAlign='left'; ctx.fillText('Mode: '+(mode==='endless'?'Endless':'Level'),12,20); ctx.textAlign='right'; ctx.fillText('Score: '+score, canvas.width-12, 20);
+
+ if(gameOver){ ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(0,0,canvas.width,canvas.height); ctx.fillStyle='#fff'; ctx.font='32px system-ui, Arial'; ctx.textAlign='center'; ctx.fillText('Game Over', canvas.width/2, canvas.height/2 - 10); ctx.font='16px system-ui, Arial'; ctx.fillText('Tap to Restart', canvas.width/2, canvas.height/2 + 20); } }
+
+let lastTS=0; function loop(ts){ if(!gameRunning) return; const dt = Math.min(33, ts-lastTS)/16.6667; lastTS = ts; update(dt); render(); if(gameOver){ gameRunning=false; overlay.style.display='flex'; if(score>highScore){ highScore=score; localStorage.setItem('dino_rework_high', highScore); highEl.textContent = highScore; } } else requestAnimationFrame(loop); }
+
+reset(); spriteImg.onload = ()=>{ render(); };
+</script></body></html>
